@@ -74,9 +74,37 @@ float RTriggerStrength = 0.25f;
 float LTriggerStrength = 0.25f;
 float RMotorStrength = 1.0f;
 float LMotorStrength = 1.0f;
+float RInputModifierBase = 100.0f;
+float LInputModifierBase = 100.0f;
 
-bool TriggerSwap = false;
 bool MotorSwap = false;
+
+enum TriggerMotorLink
+{
+	RIGHT = 0,
+	LEFT,
+	BOTH
+};
+
+TriggerMotorLink RTriggerLink = RIGHT;
+TriggerMotorLink LTriggerLink = RIGHT;
+
+float ApplyTriggerMotorStrength(TriggerMotorLink link, float leftSpeed, float rightSpeed, float strength) {
+	switch (link)
+	{
+	case RIGHT:
+		return rightSpeed * strength;
+		break;
+
+	case LEFT:
+		return leftSpeed * strength;
+		break;
+
+	default:
+		return (leftSpeed + rightSpeed) * strength / 2.0f;
+		break;
+	}
+}
 
 // Config related methods, thanks to xiaohe521, https://www.codeproject.com/Articles/10809/A-Small-Class-to-Read-INI-File
 #pragma region Config loading
@@ -84,6 +112,12 @@ float GetConfigFloat(LPCTSTR AppName, LPCTSTR KeyName, LPCTSTR Default) {
 	TCHAR result[256];
 	GetPrivateProfileString(AppName, KeyName, Default, result, 256, CONFIG_PATH);
 	return _tstof(result);
+}
+
+int GetConfigInt(LPCTSTR AppName, LPCTSTR KeyName, LPCTSTR Default) {
+	TCHAR result[256];
+	GetPrivateProfileString(AppName, KeyName, Default, result, 256, CONFIG_PATH);
+	return _tstoi(result);
 }
 
 bool GetConfigBool(LPCTSTR AppName, LPCTSTR KeyName, LPCTSTR Default) {
@@ -96,7 +130,10 @@ bool GetConfigBool(LPCTSTR AppName, LPCTSTR KeyName, LPCTSTR Default) {
 void GetConfig() {
 	LTriggerStrength = GetConfigFloat(_T("Triggers"), _T("LeftStrength"), _T("0.25"));
 	RTriggerStrength = GetConfigFloat(_T("Triggers"), _T("RightStrength"), _T("0.25"));
-	TriggerSwap = GetConfigBool(_T("Triggers"), _T("SwapSides"), _T("False"));
+	LInputModifierBase = GetConfigFloat(_T("Triggers"), _T("LeftInputModifierBase"), _T("100.0"));
+	RInputModifierBase = GetConfigFloat(_T("Triggers"), _T("RightInputModifierBase"), _T("100.0"));
+	LTriggerLink = (TriggerMotorLink)GetConfigInt(_T("Triggers"), _T("LeftTriggerLink"), _T("0"));
+	RTriggerLink = (TriggerMotorLink)GetConfigInt(_T("Triggers"), _T("RightTriggerLink"), _T("0"));
 
 	LMotorStrength = GetConfigFloat(_T("Motors"), _T("LeftStrength"), _T("1.0"));
 	RMotorStrength = GetConfigFloat(_T("Motors"), _T("RightStrength"), _T("1.0"));
@@ -473,15 +510,21 @@ DLLEXPORT DWORD WINAPI XInputSetState(_In_ DWORD dwUserIndex, _In_ XINPUT_VIBRAT
 	if (SUCCEEDED(hr)) {
 
 		GamepadVibration vibration;
-
+		
 		float LSpeed = pVibration->wLeftMotorSpeed / 65535.0f;
 		float RSpeed = pVibration->wRightMotorSpeed / 65535.0f;
+
+		float LInputModifier = LInputModifierBase > 1.0f ? (pow(LInputModifierBase, state.LeftTrigger) - 1.0f) / (LInputModifierBase - 1.0f) : 1.0f;
+		float RInputModifier = RInputModifierBase > 1.0f ? (pow(RInputModifierBase, state.RightTrigger) - 1.0f) / (RInputModifierBase - 1.0f) : 1.0f;
+
+		float finalLTriggerStrength = LInputModifier * LTriggerStrength;
+		float finalRTriggerStrength = RInputModifier * RTriggerStrength;
 
 		vibration.LeftMotor = MotorSwap ? RSpeed * LMotorStrength : LSpeed * LMotorStrength;
 		vibration.RightMotor = MotorSwap ? LSpeed * RMotorStrength : RSpeed * RMotorStrength;
 
-		vibration.LeftTrigger = TriggerSwap ? RSpeed * LTriggerStrength : LSpeed * LTriggerStrength;
-		vibration.RightTrigger = TriggerSwap ? LSpeed * RTriggerStrength : RSpeed * RTriggerStrength;
+		vibration.LeftTrigger = ApplyTriggerMotorStrength(LTriggerLink, LSpeed, RSpeed, finalLTriggerStrength);
+		vibration.RightTrigger = ApplyTriggerMotorStrength(RTriggerLink, LSpeed, RSpeed, finalRTriggerStrength);
 
 		gamepad->put_Vibration(vibration);
 
